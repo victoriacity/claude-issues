@@ -1,8 +1,27 @@
 # claude-issues
 
-`transcript-audit` — a Claude Code skill that scans your local Claude Code conversation transcripts (the JSONL files under `~/.claude/projects/`) for agent failures, instruction violations, user corrections, and behavioral patterns. It produces individual case reports with verbatim quotes and metadata, a synthesis report, and a reproducible benchmark suite.
+Claude Code skills for learning from your own session history:
 
-## What it does
+- **`transcript-audit`** — scan your local Claude Code conversation transcripts (the JSONL files under `~/.claude/projects/`) for agent failures, instruction violations, user corrections, and behavioral patterns. Produces case reports with verbatim quotes, a synthesis report, and a reproducible benchmark suite.
+- **`self-improve-loop`** — a recurring `/loop` that recursively improves Claude's behavior: each iteration harvests user corrections from the past 7 days of the current project's transcripts, distills them into durable rules (CLAUDE.md, conventions, memory), verifies earlier fixes actually stopped the pattern, and escalates repeat offenders toward mechanical enforcement.
+
+Both are standalone: Python 3.9+ standard library only, no third-party dependencies, no network access. They read your local transcripts and write to your project's own files.
+
+## self-improve-loop
+
+Start it with the `/loop` feature and it runs unattended:
+
+```
+/loop /self-improve-loop        # self-paced: the model schedules its own next iteration
+/loop 2h /self-improve-loop     # fixed interval
+/self-improve-loop              # one-shot single iteration
+```
+
+Each iteration: **HARVEST** (deduped extraction of user corrections from the trailing 7-day window) → **DISTILL** (cluster by root cause; discard work requests and noise) → **APPLY** (write rules into the lightest adequate steering surface, max 3 per iteration) → **VERIFY** (check earlier fixes against fresh evidence) → **RECORD** (append a ledger entry) → **SCHEDULE** (pace the next wake-up).
+
+The recursion is the point: a correction pattern that reappears *after* a fix landed climbs an escalation ladder — rewrite the rule → move it somewhere more binding → propose mechanical enforcement (hook/validation script) → postmortem the fix strategy itself. The loop also tunes its own detection threshold from observed precision. See `skills/self-improve-loop/SKILL.md` for the full procedure.
+
+## transcript-audit
 
 Claude Code stores every session as a JSONL file in `~/.claude/projects/<project-dir>/`. Each line is a typed event (user message, assistant response, tool result, system event). This skill runs a five-phase pipeline over those files:
 
@@ -14,34 +33,43 @@ Claude Code stores every session as a JSONL file in `~/.claude/projects/<project
 
 See `skills/transcript-audit/SKILL.md` for the full pipeline reference (signal weights, failure categories, common mistakes).
 
-## When to use
+### When to use
 
 - Periodic quality audit of Claude Code behavior across many sessions
 - After a sprint or project phase, to identify systematic failure patterns
 - Investigating a specific failure type across many sessions
 - Building an eval suite from real-world failure data
 
-Not designed for single-session investigation (just read the JSONL directly) or real-time monitoring.
+Not designed for single-session investigation (just read the JSONL directly) or real-time monitoring. For a standing loop that acts on what it finds, use `self-improve-loop` instead.
 
 ## Install
 
-Drop the skill into the standard Claude Code skills location:
+Drop either skill (or both) into the standard Claude Code skills location:
 
 ```bash
 # user-scope (available across all projects)
-cp -r skills/transcript-audit ~/.claude/skills/
+cp -r skills/transcript-audit skills/self-improve-loop ~/.claude/skills/
 
 # or project-scope
-cp -r skills/transcript-audit /path/to/your/project/.claude/skills/
+cp -r skills/transcript-audit skills/self-improve-loop /path/to/your/project/.claude/skills/
 ```
 
-Then in a Claude Code session, invoke it as `/transcript-audit`.
+Then in a Claude Code session, invoke them as `/transcript-audit` or `/self-improve-loop` (or `/loop /self-improve-loop` for the recurring form). Each skill folder is self-contained — installing one without the other works.
 
-## Run the pipeline manually
+## Run the scripts manually
 
-The scripts work standalone — useful if you want to run the pipeline without going through the Claude Code skill harness.
+The scripts work standalone — useful if you want to run them without going through the Claude Code skill harness.
 
 Requirements: **Python 3.10+, standard library only**. No third-party dependencies.
+
+```bash
+# self-improve-loop: harvest new corrections from the trailing 7-day window
+python skills/self-improve-loop/scripts/harvest_corrections.py \
+  --project-cwd /path/to/your/project \
+  --days 7 --min-score 3 \
+  --state .claude/self-improve/harvest-state.json \
+  --output .claude/self-improve/corrections.jsonl
+```
 
 ```bash
 # Phase 1: scan transcripts, produce scored index
@@ -75,6 +103,14 @@ python skills/transcript-audit/scripts/build_benchmarks.py \
 ## Layout
 
 ```
+skills/self-improve-loop/
+├── SKILL.md                       # Skill manifest + the 6-step iteration procedure
+├── scripts/
+│   ├── harvest_corrections.py     # Deduped 7-day correction extraction (state-file dedup)
+│   └── correction_signals.py      # Vendored 8-layer correction detector
+└── agents/
+    └── distiller.md               # Distillation-subagent instructions (cluster + classify)
+
 skills/transcript-audit/
 ├── SKILL.md                       # Skill manifest + full pipeline doc
 ├── scripts/
